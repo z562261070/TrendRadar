@@ -30,25 +30,19 @@ jobs:
     - name: Create frequency_words.txt if not exists
       run: |
         if [ ! -f frequency_words.txt ]; then
-
-
-           echo "creating empty frequency_words.txt file"
-           touch frequency_words.txt
-         fi
-
-    - name: Run crawler 
+          echo "Creating empty frequency_words.txt file"
+          touch frequency_words.txt
+        fi
+    
+    - name: Run crawler
       env:
-           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-           GITHUB_ACTIONS: true
+        FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        GITHUB_ACTIONS: true
       run: python main.py
-
-
     
     - name: Commit and push if changes
       run: |
-         git config --global user.name "github-actions"
-         git config --global user.email "github-actions@github.com"
-         git add -A
-         git diff --quiet --exit-code || git commit -m "Auto update by GitHub Actions at $(TZ='Asia/Shanghai' date)" && git push origin output-data 
-
-
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add -A
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update by GitHub Actions at $(TZ=Asia/Shanghai date)" && git push)
