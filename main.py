@@ -199,42 +199,84 @@ class DataFetcher:
 class DataProcessor:
     """数据处理器"""
 
-    @staticmethod
-    def save_titles_to_file(results: Dict, id_to_alias: Dict, failed_ids: List) -> str:
-        """保存标题到文件"""
-        file_path = FileHelper.get_output_path("txt", f"{TimeHelper.format_time_filename()}.txt")
+@staticmethod
+    def _build_feishu_content(stats: List[Dict], failed_ids: Optional[List] = None) -> str:
+        """构建飞书消息内容"""
+        text_content = ""
+        filtered_stats = [stat for stat in stats if stat["count"] > 0]
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            # 写入成功数据
-            for id_value, title_data in results.items():
-                display_name = id_to_alias.get(id_value, id_value)
-                f.write(f"{display_name}\n")
-                for i, (title, info) in enumerate(title_data.items(), 1):
-                    if isinstance(info, dict):
-                        ranks = info.get("ranks", [])
-                        url = info.get("url", "")
-                        mobile_url = info.get("mobileUrl", "")
-                        rank_str = ",".join(map(str, ranks))
-                        line = f"{i}. {title} (排名:{rank_str})"
-                        if url:
-                            line += f" [URL:{url}]"
-                        if mobile_url:
-                            line += f" [MOBILE:{mobile_url}]"
-                        f.write(line + "\n")
-                    else:
-                        # 兼容旧格式
-                        rank_str = ",".join(map(str, info))
-                        f.write(f"{i}. {title} (排名:{rank_str})\n")
-                f.write("\n")
+        if filtered_stats:
+            # 修改这里，使其更贴近股市主题
+            text_content += "📈 **今日股市热点词汇追踪**\n\n" 
 
-            # 写入失败信息
-            if failed_ids:
-                f.write("==== 以下ID请求失败 ====\n")
-                for id_value in failed_ids:
-                    display_name = id_to_alias.get(id_value, id_value)
-                    f.write(f"{display_name} (ID: {id_value})\n")
+        total_count = len(filtered_stats)
 
-        return file_path
+        for i, stat in enumerate(filtered_stats):
+            word = stat["word"]
+            count = stat["count"]
+
+            sequence_display = f"<font color='grey'>[{i + 1}/{total_count}]</font>"
+
+            # 频次颜色分级可以不变，或者根据你对“热点”的定义调整
+            if count >= 10:
+                text_content += f"🔥 {sequence_display} **{word}** : <font color='red'>{count}</font> 条\n\n"
+            elif count >= 5:
+                text_content += f"📈 {sequence_display} **{word}** : <font color='orange'>{count}</font> 条\n\n"
+            else:
+                text_content += f"📌 {sequence_display} **{word}** : {count} 条\n\n"
+
+            # ... (以下部分保持不变，因为标题信息对于股市也适用)
+            for j, title_data in enumerate(stat["titles"], 1):
+                title = title_data["title"]
+                source_alias = title_data["source_alias"]
+                time_display = title_data["time_display"]
+                count_info = title_data["count"]
+                ranks = title_data["ranks"]
+                rank_threshold = title_data["rank_threshold"]
+                url = title_data.get("url", "")
+                mobile_url = title_data.get("mobileUrl", "")
+
+                rank_display = StatisticsCalculator._format_rank_for_feishu(ranks, rank_threshold)
+
+                link_url = mobile_url or url
+                if link_url:
+                    formatted_title = f"[{title}]({link_url})"
+                else:
+                    formatted_title = title
+
+                text_content += f"    {j}. <font color='grey'>[{source_alias}]</font> {formatted_title}"
+                
+                if rank_display:
+                    text_content += f" {rank_display}"
+                if time_display:
+                    text_content += f" <font color='grey'>- {time_display}</font>"
+                if count_info > 1:
+                    text_content += f" <font color='green'>({count_info}次)</font>"
+                text_content += "\n"
+
+                if j < len(stat["titles"]):
+                    text_content += "\n"
+
+            # 分割线
+            if i < len(filtered_stats) - 1:
+                text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
+
+        if not text_content:
+            text_content = "📭 今日股市暂无匹配的热点词汇\n\n" # 修改这里
+
+        # 失败平台信息
+        if failed_ids and len(failed_ids) > 0:
+            if text_content and "暂无匹配" not in text_content:
+                text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
+
+            text_content += "⚠️ **股市数据获取失败的平台：**\n\n" # 修改这里
+            for i, id_value in enumerate(failed_ids, 1):
+                text_content += f"    • <font color='red'>{id_value}</font>\n"
+
+        now = TimeHelper.get_beijing_time()
+        text_content += f"\n\n<font color='grey'>更新时间：{now.strftime('%Y-%m-%d %H:%M:%S')}</font>"
+
+        return text_content
 
     @staticmethod
     def load_frequency_words(frequency_file: str = "frequency_words.txt") -> Tuple[List[Dict], List[str]]:
