@@ -199,84 +199,42 @@ class DataFetcher:
 class DataProcessor:
     """数据处理器"""
 
-@staticmethod
-    def _build_feishu_content(stats: List[Dict], failed_ids: Optional[List] = None) -> str:
-        """构建飞书消息内容"""
-        text_content = ""
-        filtered_stats = [stat for stat in stats if stat["count"] > 0]
+    @staticmethod
+    def save_titles_to_file(results: Dict, id_to_alias: Dict, failed_ids: List) -> str:
+        """保存标题到文件"""
+        file_path = FileHelper.get_output_path("txt", f"{TimeHelper.format_time_filename()}.txt")
 
-        if filtered_stats:
-            # 修改这里，使其更贴近股市主题
-            text_content += "📈 **今日股市热点词汇追踪**\n\n" 
+        with open(file_path, "w", encoding="utf-8") as f:
+            # 写入成功数据
+            for id_value, title_data in results.items():
+                display_name = id_to_alias.get(id_value, id_value)
+                f.write(f"{display_name}\n")
+                for i, (title, info) in enumerate(title_data.items(), 1):
+                    if isinstance(info, dict):
+                        ranks = info.get("ranks", [])
+                        url = info.get("url", "")
+                        mobile_url = info.get("mobileUrl", "")
+                        rank_str = ",".join(map(str, ranks))
+                        line = f"{i}. {title} (排名:{rank_str})"
+                        if url:
+                            line += f" [URL:{url}]"
+                        if mobile_url:
+                            line += f" [MOBILE:{mobile_url}]"
+                        f.write(line + "\n")
+                    else:
+                        # 兼容旧格式
+                        rank_str = ",".join(map(str, info))
+                        f.write(f"{i}. {title} (排名:{rank_str})\n")
+                f.write("\n")
 
-        total_count = len(filtered_stats)
+            # 写入失败信息
+            if failed_ids:
+                f.write("==== 以下ID请求失败 ====\n")
+                for id_value in failed_ids:
+                    display_name = id_to_alias.get(id_value, id_value)
+                    f.write(f"{display_name} (ID: {id_value})\n")
 
-        for i, stat in enumerate(filtered_stats):
-            word = stat["word"]
-            count = stat["count"]
-
-            sequence_display = f"<font color='grey'>[{i + 1}/{total_count}]</font>"
-
-            # 频次颜色分级可以不变，或者根据你对“热点”的定义调整
-            if count >= 10:
-                text_content += f"🔥 {sequence_display} **{word}** : <font color='red'>{count}</font> 条\n\n"
-            elif count >= 5:
-                text_content += f"📈 {sequence_display} **{word}** : <font color='orange'>{count}</font> 条\n\n"
-            else:
-                text_content += f"📌 {sequence_display} **{word}** : {count} 条\n\n"
-
-            # ... (以下部分保持不变，因为标题信息对于股市也适用)
-            for j, title_data in enumerate(stat["titles"], 1):
-                title = title_data["title"]
-                source_alias = title_data["source_alias"]
-                time_display = title_data["time_display"]
-                count_info = title_data["count"]
-                ranks = title_data["ranks"]
-                rank_threshold = title_data["rank_threshold"]
-                url = title_data.get("url", "")
-                mobile_url = title_data.get("mobileUrl", "")
-
-                rank_display = StatisticsCalculator._format_rank_for_feishu(ranks, rank_threshold)
-
-                link_url = mobile_url or url
-                if link_url:
-                    formatted_title = f"[{title}]({link_url})"
-                else:
-                    formatted_title = title
-
-                text_content += f"    {j}. <font color='grey'>[{source_alias}]</font> {formatted_title}"
-                
-                if rank_display:
-                    text_content += f" {rank_display}"
-                if time_display:
-                    text_content += f" <font color='grey'>- {time_display}</font>"
-                if count_info > 1:
-                    text_content += f" <font color='green'>({count_info}次)</font>"
-                text_content += "\n"
-
-                if j < len(stat["titles"]):
-                    text_content += "\n"
-
-            # 分割线
-            if i < len(filtered_stats) - 1:
-                text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
-
-        if not text_content:
-            text_content = "📭 今日股市暂无匹配的热点词汇\n\n" # 修改这里
-
-        # 失败平台信息
-        if failed_ids and len(failed_ids) > 0:
-            if text_content and "暂无匹配" not in text_content:
-                text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
-
-            text_content += "⚠️ **股市数据获取失败的平台：**\n\n" # 修改这里
-            for i, id_value in enumerate(failed_ids, 1):
-                text_content += f"    • <font color='red'>{id_value}</font>\n"
-
-        now = TimeHelper.get_beijing_time()
-        text_content += f"\n\n<font color='grey'>更新时间：{now.strftime('%Y-%m-%d %H:%M:%S')}</font>"
-
-        return text_content
+        return file_path
 
     @staticmethod
     def load_frequency_words(frequency_file: str = "frequency_words.txt") -> Tuple[List[Dict], List[str]]:
@@ -351,72 +309,72 @@ class DataProcessor:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-                sections = content.split("\n\n")
-                for section in sections:
-                    if not section.strip() or "==== 以下ID请求失败 ====" in section:
-                        continue
+            sections = content.split("\n\n")
+            for section in sections:
+                if not section.strip() or "==== 以下ID请求失败 =====" in section:
+                    continue
 
-                    lines = section.strip().split("\n")
-                    if len(lines) < 2:
-                        continue
+                lines = section.strip().split("\n")
+                if len(lines) < 2:
+                    continue
 
-                    source_name = lines[0].strip()
+                source_name = lines[0].strip()
 
-                    # 解析标题数据
-                    title_data = {}
-                    for line in lines[1:]:
-                        if line.strip():
-                            try:
-                                match_num = None
-                                title_part = line.strip()
+                # 解析标题数据
+                title_data = {}
+                for line in lines[1:]:
+                    if line.strip():
+                        try:
+                            match_num = None
+                            title_part = line.strip()
 
-                                # 提取序号
-                                if ". " in title_part and title_part.split(". ")[0].isdigit():
-                                    parts = title_part.split(". ", 1)
-                                    match_num = int(parts[0])
-                                    title_part = parts[1]
+                            # 提取序号
+                            if ". " in title_part and title_part.split(". ")[0].isdigit():
+                                parts = title_part.split(". ", 1)
+                                match_num = int(parts[0])
+                                title_part = parts[1]
 
-                                # 提取mobileUrl
-                                mobile_url = ""
-                                if " [MOBILE:" in title_part:
-                                    title_part, mobile_part = title_part.rsplit(" [MOBILE:", 1)
-                                    if mobile_part.endswith("]"):
-                                        mobile_url = mobile_part[:-1]
+                            # 提取mobileUrl
+                            mobile_url = ""
+                            if " [MOBILE:" in title_part:
+                                title_part, mobile_part = title_part.rsplit(" [MOBILE:", 1)
+                                if mobile_part.endswith("]"):
+                                    mobile_url = mobile_part[:-1]
 
-                                # 提取url
-                                url = ""
-                                if " [URL:" in title_part:
-                                    title_part, url_part = title_part.rsplit(" [URL:", 1)
-                                    if url_part.endswith("]"):
-                                        url = url_part[:-1]
+                            # 提取url
+                            url = ""
+                            if " [URL:" in title_part:
+                                title_part, url_part = title_part.rsplit(" [URL:", 1)
+                                if url_part.endswith("]"):
+                                    url = url_part[:-1]
 
-                                # 提取排名
-                                ranks = []
-                                if " (排名:" in title_part:
-                                    title, rank_str = title_part.rsplit(" (排名:", 1)
-                                    rank_str = rank_str.rstrip(")")
-                                    ranks = [int(r) for r in rank_str.split(",") if r.strip() and r.isdigit()]
-                                else:
-                                    title = title_part
+                            # 提取排名
+                            ranks = []
+                            if " (排名:" in title_part:
+                                title, rank_str = title_part.rsplit(" (排名:", 1)
+                                rank_str = rank_str.rstrip(")")
+                                ranks = [int(r) for r in rank_str.split(",") if r.strip() and r.isdigit()]
+                            else:
+                                title = title_part
 
-                                if not ranks and match_num is not None:
-                                    ranks = [match_num]
-                                if not ranks:
-                                    ranks = [99]
+                            if not ranks and match_num is not None:
+                                ranks = [match_num]
+                            if not ranks:
+                                ranks = [99]
 
-                                title_data[title] = {
-                                    "ranks": ranks,
-                                    "url": url,
-                                    "mobileUrl": mobile_url
-                                }
+                            title_data[title] = {
+                                "ranks": ranks,
+                                "url": url,
+                                "mobileUrl": mobile_url
+                            }
 
-                            except Exception as e:
-                                print(f"解析标题行出错: {line}, 错误: {e}")
+                        except Exception as e:
+                            print(f"解析标题行出错: {line}, 错误: {e}")
 
-                    DataProcessor._process_source_data(
-                        source_name, title_data, time_info,
-                        all_results, title_info, id_to_alias
-                    )
+                DataProcessor._process_source_data(
+                    source_name, title_data, time_info,
+                    all_results, title_info, id_to_alias
+                )
 
         # 转换为ID结果
         id_results = {}
@@ -771,7 +729,7 @@ class ReportGenerator:
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>频率词统计报告</title>
+            <title>股市热点词汇统计报告</title>
             <style>
                 body { font-family: Arial, sans-serif; margin: 20px; }
                 h1, h2 { color: #333; }
@@ -803,7 +761,7 @@ class ReportGenerator:
             </style>
         </head>
         <body>
-            <h1>频率词统计报告</h1>
+            <h1>股市热点词汇统计报告</h1>
         """
 
         if is_daily:
@@ -899,10 +857,10 @@ class ReportGenerator:
             text = str(text)
     
         return (text.replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-                    .replace('"', "&quot;")
-                    .replace("'", "&#x27;"))
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                        .replace('"', "&quot;")
+                        .replace("'", "&#x27;"))
 
     @staticmethod
     def send_to_feishu(
@@ -918,22 +876,30 @@ class ReportGenerator:
             return False
 
         headers = {"Content-Type": "application/json"}
-        total_titles = sum(len(stat["titles"]) for stat in stats if stat["count"] > 0)
+        # total_titles = sum(len(stat["titles"]) for stat in stats if stat["count"] > 0) # 飞书消息内容不直接显示总标题数
         text_content = ReportGenerator._build_feishu_content(stats, failed_ids)
 
         now = TimeHelper.get_beijing_time()
         payload = {
             "msg_type": "text",
             "content": {
-                "total_titles": total_titles,
-                "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "report_type": report_type,
+                # "total_titles": total_titles, # 飞书消息内容不直接显示总标题数
+                # "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"), # 时间信息已在text_content末尾
+                # "report_type": report_type, # 报告类型已在text_content标题中体现
                 "text": text_content,
             },
         }
+        
+        # 飞书文本消息结构调整，直接放入text字段
+        feishu_payload = {
+            "msg_type": "text",
+            "content": {
+                "text": text_content
+            }
+        }
 
         try:
-            response = requests.post(webhook_url, headers=headers, json=payload)
+            response = requests.post(webhook_url, headers=headers, json=feishu_payload)
             if response.status_code == 200:
                 print(f"数据发送到飞书成功 [{report_type}]")
                 return True
@@ -951,7 +917,8 @@ class ReportGenerator:
         filtered_stats = [stat for stat in stats if stat["count"] > 0]
 
         if filtered_stats:
-            text_content += "📊 **热点词汇统计**\n\n"
+            # 针对股市主题的修改
+            text_content += "📈 **今日股市热点词汇追踪**\n\n"
 
         total_count = len(filtered_stats)
 
@@ -988,7 +955,7 @@ class ReportGenerator:
                 else:
                     formatted_title = title
 
-                text_content += f"  {j}. <font color='grey'>[{source_alias}]</font> {formatted_title}"
+                text_content += f"    {j}. <font color='grey'>[{source_alias}]</font> {formatted_title}"
             
                 if rank_display:
                     text_content += f" {rank_display}"
@@ -1006,16 +973,18 @@ class ReportGenerator:
                 text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
 
         if not text_content:
-            text_content = "📭 暂无匹配的热点词汇\n\n"
+            # 针对股市主题的修改
+            text_content = "📭 今日股市暂无匹配的热点词汇\n\n"
 
         # 失败平台信息
         if failed_ids and len(failed_ids) > 0:
             if text_content and "暂无匹配" not in text_content:
                 text_content += f"\n{CONFIG['FEISHU_SEPARATOR']}\n\n"
 
-            text_content += "⚠️ **数据获取失败的平台：**\n\n"
+            # 针对股市主题的修改
+            text_content += "⚠️ **股市数据获取失败的平台：**\n\n"
             for i, id_value in enumerate(failed_ids, 1):
-                text_content += f"  • <font color='red'>{id_value}</font>\n"
+                text_content += f"    • <font color='red'>{id_value}</font>\n"
 
         now = TimeHelper.get_beijing_time()
         text_content += f"\n\n<font color='grey'>更新时间：{now.strftime('%Y-%m-%d %H:%M:%S')}</font>"
@@ -1097,13 +1066,27 @@ class NewsAnalyzer:
         print(f"飞书报告类型: {self.feishu_report_type}")
         print(f"排名阈值: {self.rank_threshold}")
 
-        # 爬取目标列表
+        # 爬取目标列表，已根据股市主题进行初步筛选和注释
         ids = [
-             ("cls-hot", "财联社热门"),
+            ("cls-hot", "财联社热门"),
             ("cls-telegraph", "财联社快讯"),
             ("wallstreetcn-hot", "华尔街见闻"),
-            ("xueqiu", "雪球"),
-
+            "xueqiu",
+            # 如果 newsnow.busiyi.world 支持更多财经ID，可以继续添加，例如：
+            # ("eastmoney", "东方财富"),
+            # ("ths", "同花顺"),
+            # ("sinafinance", "新浪财经"),
+            # 请注意：如果上述平台在 busiyi.world 没有对应ID，你需要自己实现爬虫逻辑。
+            # 以下为通用/非强股市相关，建议移除或根据需要自行判断：
+            # ("toutiao", "今日头条"),
+            # ("baidu", "百度热搜"),
+            # ("thepaper", "澎湃新闻"),
+            # ("bilibili-hot-search", "bilibili 热搜"),
+            # ("ifeng", "凤凰网"),
+            # "tieba",
+            # "weibo",
+            # "douyin",
+            # "zhihu",
         ]
 
         print(f"开始爬取数据，请求间隔 {self.request_interval} 毫秒")
